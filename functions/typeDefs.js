@@ -61,6 +61,35 @@ const typeDefs = gql`
     list: [Course]
     cursor: String
   }
+  type Lesson {
+    name: String!
+    url: String!
+    metadata: StorageObject!
+    description: String!
+  }
+  input LessonInput {
+    name: String
+    description: String
+  }
+  type Syllabus {
+    id: String!
+    name: String!
+    author: Author!
+    languages: [String!]!
+    university: String!
+    yearGroup: String!
+    thumbnail: String!
+    thumbnailMetadata: StorageObject!
+    lessons: [Lesson!]
+  }
+  input SyllabusInput {
+    name: String
+    languages: [String]
+    university: String
+    yearGroup: String
+    lessons: [LessonInput]
+    author: ID
+  }
   type Author {
     id: ID!
     name: String!
@@ -100,6 +129,9 @@ const typeDefs = gql`
     message: String!
     findCourseById(courseId: ID!): Course
     getCourseList(batchSize: Int!, cursor: ID!): CourseList
+    findSyllabusById(syllabusId: ID!): Syllabus
+    getCourseSyllabus(courseId: String!): [Syllabus]
+    getSyllabusList: [Syllabus]
   }
   type Mutation {
     uploadFile(input: UploadInput!): File
@@ -109,6 +141,17 @@ const typeDefs = gql`
     addCourse(course: CourseInput!): Course
     updateCourse(courseId: ID!, course: CourseInput!): Course
     addAuthor(author: AuthorInput!): Author
+    addSyllabus(courseId: ID!, syllabus: SyllabusInput!): Syllabus
+    updateSyllabusLessons(
+      courseId: ID!
+      syllabusId: ID!
+      lesson: LessonInput!
+    ): Syllabus
+    removeSyllabus(
+      courseId: ID!
+      syllabusId: ID!
+      lessonName: String!
+    ): Syllabus
   }
 `;
 

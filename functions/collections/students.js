@@ -20,6 +20,23 @@ class Students {
       });
     return stud;
   }
+
+  async findWhere(key, value, operation) {
+    return await this.collection
+      .where(key, operation, value)
+      .get()
+      .then((querySnapshot) => {
+        let matchingDocuments = [];
+        querySnapshot.forEach((doc) => {
+          matchingDocuments.push({ id: doc.id, ...doc.data() });
+        });
+        return matchingDocuments;
+      })
+      .catch((error) => {
+        console.error("Error retrieving documents:", error);
+        throw new ApolloError(fetchError);
+      });
+  }
 }
 
 module.exports = Students;

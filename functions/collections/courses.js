@@ -1,6 +1,8 @@
 const { ValidationError, ApolloError } = require("apollo-server-express");
 const { getDownloadURL, deleteObject } = require("firebase-admin/storage");
 const { v4: uuidv4 } = require("uuid");
+const Syllabus = require("./syllabus");
+const Authors = require("./authors");
 
 class Courses {
   constructor(admin) {
@@ -9,6 +11,7 @@ class Courses {
     this.storage = admin.storage();
     this.bucket = this.storage.bucket();
     this.collection = this.store.collection(this.NAME);
+    this.authors = new Authors(admin);
   }
 
   async uploadStreamToStorage(fileObject, storageFileName) {
@@ -44,7 +47,7 @@ class Courses {
     });
   }
 
-  #generateUniqueFilename(originalFilename) {
+  generateUniqueFilename(originalFilename) {
     const uniqueId = uuidv4();
     const fileExtension = originalFilename.slice(
       ((originalFilename.lastIndexOf(".") - 1) >>> 0) + 2
@@ -88,7 +91,7 @@ class Courses {
       });
     if (courses.length !== 0)
       return new ValidationError(`${course.name} course already exists.`);
-    let filename = this.#generateUniqueFilename(files[0].filename.filename);
+    let filename = this.generateUniqueFilename(files[0].filename.filename);
     let downloadUrl = await this.uploadStreamToStorage(
       files[0],
       `courses/${filename}`
@@ -159,7 +162,7 @@ class Courses {
       });
 
     if (files.length > 0) {
-      let filename = this.#generateUniqueFilename(files[0].filename.filename);
+      let filename = this.generateUniqueFilename(files[0].filename.filename);
       await this.uploadStreamToStorage(files[0], `courses/${filename}`)
         .then(async () => {
           let fileRef = this.bucket.file(`courses/${filename}`);
@@ -235,6 +238,227 @@ class Courses {
         ? results[results.length - 1].id
         : null,
     };
+  }
+
+  async insertNewSyllabus(courseId, payload, files) {
+    let syllabus = new Syllabus(this.collection.doc(courseId));
+    let exists = await syllabus.existsNameUniversity(
+      payload.name,
+      payload.university,
+      payload.yearGroup
+    );
+    if (exists !== 0)
+      return new ValidationError(
+        `${payload.name} at ${payload.university} for ${payload.yearGroup} students already exists.`
+      );
+    if (!files || files.length !== 1)
+      return new ValidationError("Please provide a thumbnail image.");
+    let author = await this.authors.findById(payload.author);
+    let filename = this.generateUniqueFilename(files[0].filename.filename);
+    await this.uploadStreamToStorage(files[0], `syllabus/${filename}`)
+      .then(async () => {
+        let fileRef = this.bucket.file(`syllabus/${filename}`);
+        await fileRef
+          .getMetadata()
+          .then((data) => {
+            payload.thumbnailMetadata = data[0];
+          })
+          .catch((error) => {
+            throw error;
+          });
+        await getDownloadURL(fileRef)
+          .then((downloadUrl) => {
+            payload.thumbnail = downloadUrl;
+          })
+          .catch((err) => {
+            throw err;
+          });
+      })
+      .catch((err) => {
+        throw err;
+      });
+    payload.lessons = [];
+
+    let inserted = await syllabus
+      .addNewSyllabus(payload)
+      .then((data) => {
+        return data;
+      })
+      .catch((err) => {
+        throw new ApolloError("Failed to insert new syllabus");
+      });
+    return await this.findSyllabusById(inserted.id);
+  }
+
+  async getSyllabusById(syllabusId) {
+    let courses = await this.collection.listDocuments();
+    for (let course of courses) {
+      let syllabus = new Syllabus(course);
+      try {
+        let found = await syllabus.findById(syllabusId);
+        return found;
+      } catch (error) {
+        console.log("error occured");
+        continue;
+      }
+    }
+    return null;
+  }
+
+  async findSyllabusById(syllabusId) {
+    let courses = await this.collection.listDocuments();
+    for (let course of courses) {
+      let syllabus = new Syllabus(course);
+      try {
+        let found = await syllabus.findById(syllabusId);
+        let author = await this.authors.findById(found.author);
+        found.author = author;
+        return found;
+      } catch (error) {
+        console.log("error occured");
+        continue;
+      }
+    }
+    return null;
+  }
+
+  async getCourseSyllabus(courseId) {
+    return await this.collection
+      .doc(courseId)
+      .collection("syllabus")
+      .get()
+      .then((snapshot) => {
+        let data = snapshot.docs.map(async (item) => {
+          let syllabus = { id: item.id, ...item.data() };
+          let author = await this.authors.findById(syllabus.author);
+          syllabus.author = author;
+          return syllabus;
+        });
+        return data;
+      })
+      .catch((err) => {
+        throw err;
+      });
+  }
+
+  // async syllabusList() {
+  //   let allItems = [];
+  //   await this.collection
+  //     .get()
+  //     .then((querySnapshot) => {
+  //       querySnapshot.forEach(async (doc) => {
+  //         const syllabusCollectionRef = this.collection
+  //           .doc(doc.id)
+  //           .collection("syllabus");
+
+  //         await syllabusCollectionRef
+  //           .get()
+  //           .then((syllabusSnapshot) => {
+  //             syllabusSnapshot.forEach((syllabusDoc) => {
+  //               const syllabusData = syllabusDoc.data();
+  //               allItems.push(syllabusData);
+  //               console.log(allItems);
+  //             });
+
+  //             // At this point, all items from the current subcollection have been appended to 'allItems'
+  //           })
+  //           .catch((error) => {
+  //             console.error("Error getting subcollection documents:", error);
+  //           });
+  //       });
+  //       // 'allItems' now contains all items from all subcollections in the 'courses' collection
+  //     })
+  //     .catch((error) => {
+  //       console.error(
+  //         "Error getting documents from the main collection:",
+  //         error
+  //       );
+  //     });
+  //   console.log(allItems);
+  //   return allItems;
+  // }
+
+  async syllabusList() {
+    let allItems = [];
+
+    try {
+      const querySnapshot = await this.collection.get();
+      for (const doc of querySnapshot.docs) {
+        const syllabusCollectionRef = this.collection
+          .doc(doc.id)
+          .collection("syllabus");
+        const syllabusSnapshot = await syllabusCollectionRef.get();
+        syllabusSnapshot.forEach(async (syllabusDoc) => {
+          const syllabusData = { id: syllabusDoc.id, ...syllabusDoc.data() };
+          let author = await this.authors.findById(syllabusData.author);
+          syllabusData.author = author;
+          allItems.push(syllabusData);
+        });
+      }
+      return allItems;
+    } catch (error) {
+      console.error("Error:", error);
+      throw error; // Rethrow the error to be handled by the caller
+    }
+  }
+
+  async removeSyllabus(courseId, syllabusId, lessonName) {
+    let syllabus = await this.getSyllabusById(syllabusId);
+    syllabus.lessons = syllabus.lessons.filter(
+      (item) => item.name !== lessonName
+    );
+    let update = {
+      lessons: syllabus.lessons,
+    };
+    await this.collection
+      .doc(courseId)
+      .collection("syllabus")
+      .doc(syllabusId)
+      .update(update);
+    return await this.findSyllabusById(syllabusId);
+  }
+
+  async updateSyllabusLessons(courseId, syllabusId, lesson, files) {
+    let course = await this.findById(courseId);
+    let found = await this.findSyllabusById(syllabusId);
+    for (let foundLesson in found.lessons) {
+      if (lesson.name === foundLesson.name)
+        return new ValidationError("Lessons can not have the same name.");
+    }
+    if (!files) return new ValidationError("Please upload the pdf file.");
+    if (files && files.length > 0) {
+      let filename = this.generateUniqueFilename(files[0].filename.filename);
+      await this.uploadStreamToStorage(files[0], `materials/${filename}`)
+        .then(async () => {
+          let fileRef = this.bucket.file(`materials/${filename}`);
+          await fileRef
+            .getMetadata()
+            .then((data) => {
+              lesson.metadata = data[0];
+            })
+            .catch((error) => {
+              throw error;
+            });
+          await getDownloadURL(fileRef)
+            .then((downloadUrl) => {
+              lesson.url = downloadUrl;
+            })
+            .catch((err) => {
+              throw err;
+            });
+        })
+        .catch((err) => {
+          throw err;
+        });
+    }
+    found.lessons.push(lesson);
+    let payload = { lessons: [...found.lessons] };
+    let added = await this.collection
+      .doc(courseId)
+      .collection("syllabus")
+      .doc(syllabusId)
+      .update(payload);
+    return await this.findSyllabusById(syllabusId);
   }
 }
 

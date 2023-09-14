@@ -3,6 +3,7 @@ const Users = require("./collections/users");
 const Students = require("./collections/students");
 const Courses = require("./collections/courses");
 const Authors = require("./collections/authors");
+const Syllabus = require("./collections/syllabus");
 
 const resolvers = {
   Query: {
@@ -23,6 +24,18 @@ const resolvers = {
     getCourseList: (parent, args, context, info) => {
       const courses = new Courses(admin);
       return courses.getCourseList(args.batchSize, args.cursor);
+    },
+    findSyllabusById: (parent, args, context, info) => {
+      const courses = new Courses(admin);
+      return courses.findSyllabusById(args.syllabusId);
+    },
+    getCourseSyllabus: (parent, args, context, info) => {
+      const courses = new Courses(admin);
+      return courses.getCourseSyllabus(args.courseId);
+    },
+    getSyllabusList: (parent, args, context, info) => {
+      const course = new Courses(admin);
+      return course.syllabusList();
     },
   },
   Mutation: {
@@ -64,6 +77,31 @@ const resolvers = {
         .catch((err) => {
           throw err;
         });
+    },
+    addSyllabus: async (parent, args, context, info) => {
+      const courses = new Courses(admin);
+      return courses.insertNewSyllabus(
+        args.courseId,
+        args.syllabus,
+        context.req.body.files
+      );
+    },
+    updateSyllabusLessons: async (parent, args, context, info) => {
+      const courses = new Courses(admin);
+      return courses.updateSyllabusLessons(
+        args.courseId,
+        args.syllabusId,
+        args.lesson,
+        context.req.body.files
+      );
+    },
+    removeSyllabus: (parent, args, context, info) => {
+      const courses = new Courses(admin);
+      return courses.removeSyllabus(
+        args.courseId,
+        args.syllabusId,
+        args.lessonName
+      );
     },
   },
 };
